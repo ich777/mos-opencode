@@ -68,6 +68,8 @@ jobs:
           # Copy Vue plugin
           cp -R page/dist/opencode/* ${PKG_DIR}/var/www/mos-plugins/opencode/
 
+          cp icon.png ${PKG_DIR}/var/www/mos-plugins/opencode/
+
           # Create DEBIAN control file
           cat > ${PKG_DIR}/DEBIAN/control << EOF
           Package: opencode-plugin
