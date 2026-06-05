@@ -1,0 +1,182 @@
+#!/bin/bash
+
+# Import MOS Functions
+. /usr/local/lib/functions/mos-common
+
+# Set HEADER if GitHub Token was specified
+GH_TOKEN=$(jq -r '.github // empty' /boot/config/system/tokens.json 2>/dev/null)
+if [ ! -z "$GH_TOKEN" ] ; then
+  TOKEN="$(decrypt_password "$GH_TOKEN" "tokens")"
+  HEADER=(--header "Authorization: Bearer $TOKEN")
+else
+  HEADER=()
+fi
+
+# Set Variables
+PLG_DIR="/boot/optional/plugins/opencode"
+PID_FILE="/var/run/mos-opencode.pid"
+
+# Function to get latest version from GitHub
+get_latest_version() {
+  local TAGS VERSION
+  TAGS=$(curl -s "${HEADER[@]}" "https://api.github.com/repos/anomalyco/opencode/releases/latest" 2>/dev/null)
+  VERSION=$(echo "$TAGS" | jq -r '.tag_name // empty' 2>/dev/null)
+  if [ -z "$VERSION" ] ; then
+    VERSION=$(echo "$TAGS" | jq -r '.name // empty' 2>/dev/null)
+  fi
+  if [ -z "$VERSION" ] ; then
+    echo "v0"
+  else
+    echo "$VERSION"
+  fi
+}
+
+case "$1" in
+  check_version)
+    CURRENT_VERSION=$(jq -r '.version // empty' "$PLG_DIR/settings.json" 2>/dev/null)
+    if [ -z "$CURRENT_VERSION" ] ; then
+      CURRENT_VERSION="not installed"
+    fi
+
+    LATEST_VERSION=$(get_latest_version)
+
+    if [ "$CURRENT_VERSION" = "not installed" ] || [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] ; then
+      echo "{\"current\":\"$CURRENT_VERSION\",\"latest\":\"$LATEST_VERSION\",\"update_available\":true}"
+    else
+      echo "{\"current\":\"$CURRENT_VERSION\",\"latest\":\"$LATEST_VERSION\",\"update_available\":false}"
+    fi
+  ;;
+
+  install_binary)
+    mkdir -p "$PLG_DIR/bin"
+
+    ARCHITECTURE=$(uname -m)
+    if [ "$ARCHITECTURE" = "x86_64" ] ; then
+      ARCHITECTURE="x64"
+    elif [ "$ARCHITECTURE" = "aarch64" ] ; then
+      ARCHITECTURE="arm64"
+    fi
+
+    VERSION=$(get_latest_version)
+    URL="https://github.com/anomalyco/opencode/releases/download/${VERSION}/opencode-linux-${ARCHITECTURE}.tar.gz"
+    TAR_FILE="/tmp/opencode-download.tar.gz"
+
+    echo "Downloading opencode"
+    echo "Architecture: $ARCHITECTURE"
+
+    if wget -q "$URL" -O "$TAR_FILE" ; then
+      if [ -f "$TAR_FILE" ] && [ -s "$TAR_FILE" ] ; then
+        echo "Extracting..."
+        tar -xzf "$TAR_FILE" -C "$PLG_DIR/bin"
+        chmod +x "$PLG_DIR/bin/opencode"
+        rm -f "$TAR_FILE"
+
+        # Copy to /usr/bin
+        cp "$PLG_DIR/opencode" /usr/bin/opencodeorig
+        chmod +x /usr/bin/rcloneorig
+
+        jq ".version = \"$VERSION\"" "$PLG_DIR/settings.json" > "$PLG_DIR/settings.json.tmp"
+        mv "$PLG_DIR/settings.json.tmp" "$PLG_DIR/settings.json"
+
+        echo "Installed $VERSION"
+      else
+        rm -f "$TAR_FILE"
+        echo "Downloaded file is empty"
+        exit 1
+      fi
+    else
+      rm -f "$TAR_FILE"
+      echo "Failed to download"
+      exit 1
+    fi
+  ;;
+
+  start)
+    if [ -f "$PID_FILE" ] ; then
+      OLDPID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$OLDPID" ] && kill -0 "$OLDPID" 2>/dev/null ; then
+        echo "Already running (PID: $OLDPID)"
+        exit 0
+      fi
+      rm -f "$PID_FILE"
+    fi
+
+    # Read settings
+    PLG_SETTINGS=$(cat "$PLG_DIR/settings.json" 2>/dev/null)
+    PORT=$(echo "$PLG_SETTINGS" | jq -r '.port // "4096"')
+    HOSTNAME=$(echo "$PLG_SETTINGS" | jq -r '.hostname // "0.0.0.0"')
+    DATA_HOME=$(echo "$PLG_SETTINGS" | jq -r '.data_home // empty')
+
+    # Check DATA_HOME
+    if [ -z "$DATA_HOME" ] || [ "$DATA_HOME" = "null" ] ; then
+      echo "Error: data_home not configured in settings.json"
+      exit 1
+    fi
+
+    # Start OpenCode
+    export XDG_CONFIG_HOME="$DATA_HOME/config"
+    export XDG_DATA_HOME="$DATA_HOME/data"
+
+    # Create directories
+    mkdir -p "$DATA_HOME/config" "$DATA_HOME/data"
+
+    nohup "/usr/bin/opencodeorig" serve \
+      --port "$PORT" \
+      --hostname "$HOSTNAME" \
+      --log-level INFO \
+      > /dev/null 2>&1 &
+
+    NEWPID=$!
+    echo $NEWPID > "$PID_FILE"
+    sleep 0.5
+    if kill -0 $NEWPID 2>/dev/null ; then
+      echo "Started (PID: $NEWPID)"
+    else
+      rm -f "$PID_FILE"
+      echo "Failed to start"
+      exit 1
+    fi
+  ;;
+
+  stop)
+    if [ -f "$PID_FILE" ]; then
+      PID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null ; then
+        kill "$PID" 2>/dev/null
+        sleep 1
+        kill -9 "$PID" 2>/dev/null
+      fi
+      rm -f "$PID_FILE"
+      echo "Stopped"
+    else
+      echo "Not running"
+    fi
+  ;;
+
+  restart)
+    if [ -f "$PID_FILE" ] ; then
+      PID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        kill "$PID" 2>/dev/null
+        sleep 1
+        kill -9 "$PID" 2>/dev/null
+      fi
+      rm -f "$PID_FILE"
+    fi
+
+    /usr/bin/plugins/opencode start
+  ;;
+
+  status)
+    RUNNING="false"
+    
+    if [ -f "$PID_FILE" ]; then
+      PID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null ; then
+        RUNNING="true"
+      fi
+    fi
+
+    echo "{\"running\":$RUNNING}"
+  ;;
+esac

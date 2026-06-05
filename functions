@@ -1,0 +1,71 @@
+#!/bin/bash
+PLG_DIR="/boot/optional/plugins/opencode"
+
+install() {
+  /usr/bin/plugins/opencode install_binary
+}
+
+uninstall() {
+  # Stop running daemon
+  if [ -f /var/run/mos-opencode.pid ] ; then
+    PID=$(cat /var/run/mos-opencode.pid 2>/dev/null)
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null ; then
+      kill "$PID" 2>/dev/null
+      sleep 1
+      kill -9 "$PID" 2>/dev/null
+    fi
+    rm -f /var/run/mos-opencode.pid
+  fi
+
+  # Remove runtime binary
+  rm -f /usr/bin/opencodeorig
+}
+
+mos_start() {
+  if [ -f "$PLG_DIR/bin/opencode" ]; then
+    cp "$PLG_DIR/bin/opencode" /usr/bin/opencodeorig
+    chmod +x /usr/bin/opencodeorig
+  fi
+
+  if [ ! -d "$PLG_DIR/config" ]; then
+    mkdir -p "$PLG_DIR/config"
+  fi
+}
+
+mos_start_after_services() {
+  PLG_SETTINGS=$(cat "$PLG_DIR/settings.json" 2>/dev/null)
+  AUTO_START=$(echo "$PLG_SETTINGS" | jq -r '.auto_start // false')
+  PORT=$(echo "$PLG_SETTINGS" | jq -r '.port // "4096"')
+
+  if [ "$AUTO_START" == "true" ] && [ "$PORT" != "0" ] ; then
+    if [ -f /usr/bin/opencodeorig ]; then
+      DATA_HOME=$(echo "$PLG_SETTINGS" | jq -r '.data_home // empty')
+
+      if [ -z "$DATA_HOME" ] || [ "$DATA_HOME" = "null" ]; then
+        echo "Error: data_home not configured"
+        return 1
+      fi
+
+      export XDG_CONFIG_HOME="$DATA_HOME/config"
+      export XDG_DATA_HOME="$DATA_HOME/data"
+
+      mkdir -p "$DATA_HOME/config" "$DATA_HOME/data"
+
+      nohup /usr/bin/opencodeorig serve \
+        --port "$PORT" \
+        --hostname "0.0.0.0" \
+        --log-level INFO \
+        > /dev/null 2>&1 &
+      PID=$!
+      echo $PID > "/var/run/mos-opencode.pid"
+      sleep 0.5
+      if kill -0 $PID 2>/dev/null; then
+        echo "Started opencode (PID: $PID)"
+      else
+        rm -f "/var/run/mos-opencode.pid"
+        echo "Failed to start opencode"
+        return 1
+      fi
+    fi
+  fi
+}

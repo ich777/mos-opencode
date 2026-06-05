@@ -1,0 +1,25 @@
+#!/bin/bash
+SETTINGS_FILE="/boot/optional/plugins/opencode/settings.json"
+DATA_HOME=""
+if [ -f "$SETTINGS_FILE" ]; then
+  DATA_HOME=$(jq -r '.data_home // empty' "$SETTINGS_FILE" 2>/dev/null)
+fi
+
+if [ -z "$DATA_HOME" ] || [ "$DATA_HOME" = "null" ]; then
+  echo "Error: OPENCODE_DATA_HOME not configured." >&2
+  echo "Please set 'data_home' in /boot/optional/plugins/opencode/settings.json" >&2
+  exit 1
+fi
+
+if [ -f "$SETTINGS_FILE" ]; then
+  WORK_DIR=$(jq -r '.work_dir // "/root"' "$SETTINGS_FILE" 2>/dev/null)
+fi
+
+export XDG_CONFIG_HOME="$DATA_HOME/config"
+export XDG_DATA_HOME="$DATA_HOME/data"
+
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
+cd "$WORK_DIR"
+
+exec /usr/bin/opencodeorig "$@"
