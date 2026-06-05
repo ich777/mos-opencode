@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue';
 import federation from '@originjs/vite-plugin-federation';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
-import pluginConfig from './src/plugin.config.js';
+import pluginConfig from './plugin.config.js';
 
 const PLUGIN_VERSION = process.env.PLUGIN_VERSION || pluginConfig.version;
 const PLUGIN_NAME = pluginConfig.name;
