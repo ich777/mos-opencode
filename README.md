@@ -1,4 +1,4 @@
-# mos-opencode
+# MOS OpenCode
 
 MOS Plugin for OpenCode - AI-powered coding assistant.
 
