@@ -72,8 +72,8 @@ case "$1" in
         rm -f "$TAR_FILE"
 
         # Copy to /usr/bin
-        cp "$PLG_DIR/opencode" /usr/bin/opencodeorig
-        chmod +x /usr/bin/rcloneorig
+        cp "$PLG_DIR/bin/opencode" /usr/bin/opencodeorig
+        chmod +x /usr/bin/opencodeorig
 
         jq ".version = \"$VERSION\"" "$PLG_DIR/settings.json" > "$PLG_DIR/settings.json.tmp"
         mv "$PLG_DIR/settings.json.tmp" "$PLG_DIR/settings.json"
